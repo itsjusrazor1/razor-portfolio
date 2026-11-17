@@ -1,25 +1,34 @@
 // Mobile navigation
-const toggle = document.querySelector('.menu-toggle');
-const links = document.querySelector('.nav-links');
-if (toggle && links) {
-  toggle.addEventListener('click', () => {
-    const isOpen = links.classList.toggle('open');
-    toggle.setAttribute('aria-expanded', String(isOpen));
-    toggle.textContent = isOpen ? '×' : '☰';
+const menuButton = document.querySelector('.menu-toggle');
+const navLinks = document.querySelector('.nav-links');
+if (menuButton && navLinks) {
+  menuButton.addEventListener('click', () => {
+    const isOpen = navLinks.classList.toggle('open');
+    menuButton.setAttribute('aria-expanded', String(isOpen));
+    menuButton.textContent = isOpen ? '×' : '☰';
   });
 }
 
-// RAZOR MUSIC PLAYER
-// Music files are stored in this browser on this device only (IndexedDB).
-// Visitors must choose their own audio file; it is never uploaded to your website.
+// Razor soundtrack picker. Tracks are 30-second previews supplied by the
+// iTunes Search API; this does not stream or host full commercial songs.
 (() => {
-  const DB_NAME = 'razorPortfolioMusic';
-  const STORE = 'settings';
-  const DB_VERSION = 1;
+  const starterTracks = [
+    { term: 'Janice STFU Drake', label: 'Janice STFU', artist: 'Drake' },
+    { term: "Shotta's Season 25", label: "Shotta's", artist: 'Season 25' },
+    { term: 'Love Sosa Chief Keef', label: 'Love Sosa', artist: 'Chief Keef' },
+    { term: 'Morning Dew Xavier Wulf Bones', label: 'Morning Dew', artist: 'Xavier Wulf, Bones' },
+    { term: 'Routine Rouge PARTYNEXTDOOR', label: 'Routine Rouge', artist: 'PARTYNEXTDOOR' },
+    { term: 'Her Way PARTYNEXTDOOR', label: 'Her Way', artist: 'PARTYNEXTDOOR' },
+    { term: 'Out The Way Yeat', label: 'Out The Way', artist: 'Yeat' },
+    { term: 'National Treasures Drake', label: 'National Treasures', artist: 'Drake' },
+    { term: 'COME N GO Yeat', label: 'COME N GO', artist: 'Yeat' },
+    { term: 'No Pole Don Toliver', label: 'No Pole', artist: 'Don Toliver' }
+  ];
+
   const audio = new Audio();
-  audio.loop = true;
-  let currentUrl = null;
-  let savedBlob = null;
+  let tracks = [];
+  let selectedTrack = null;
+  let searchVersion = 0;
 
   const modal = document.createElement('section');
   modal.className = 'music-modal';
@@ -28,96 +37,132 @@ if (toggle && links) {
   modal.setAttribute('aria-labelledby', 'music-title');
   modal.innerHTML = `
     <div class="music-dialog">
-      <button class="music-close" type="button" aria-label="Close music setup">×</button>
-      <p class="eyebrow">YOUR BROWSING SOUNDTRACK</p>
-      <h2 id="music-title">Add some <span>music.</span></h2>
-      <p class="music-description">Choose an audio file from your device, or skip this for now. Your file stays on this device.</p>
-      <label class="music-file-label">Choose audio file
-        <input class="music-file" type="file" accept="audio/*">
-      </label>
-      <p class="music-filename" aria-live="polite">No file selected</p>
-      <div class="music-modal-actions">
-        <button class="button primary music-play" type="button" disabled>▶ Play</button>
-        <button class="button secondary music-skip" type="button">Skip</button>
+      <button class="music-close" type="button" aria-label="Close music picker">×</button>
+      <div class="music-heading-row">
+        <div><p class="eyebrow">RAZOR SOUNDTRACK</p><h2 id="music-title">Choose a <span>song.</span></h2>
+        <p class="music-description">Pick a track to play a short preview while you browse.</p></div>
+        <button class="music-random" type="button">Random ↗</button>
       </div>
-      <p class="music-hint">Browsers require a button press before audio can play.</p>
+      <div class="music-list-heading"><strong>Choose a track</strong><span class="music-count">Loading tracks…</span></div>
+      <label class="music-search-wrap"><span>⌕</span><input class="music-search" type="search" placeholder="Search songs or artists…" autocomplete="off"></label>
+      <div class="music-track-list" aria-live="polite"><p class="music-loading">Finding song previews…</p></div>
+      <div class="music-footer-row"><span class="music-selected-label">No track selected</span><button class="button primary music-enter" type="button" disabled>Enter site <span>↗</span></button></div>
+      <p class="music-hint">Previews are about 30 seconds. Press Enter site to start playback.</p>
+      <button class="music-skip" type="button">Continue without music</button>
     </div>`;
   document.body.appendChild(modal);
 
   const player = document.createElement('aside');
   player.className = 'music-player';
-  player.innerHTML = `
-    <span class="music-player-mark">♫</span>
-    <span class="music-player-name">No music selected</span>
-    <button type="button" class="music-control music-toggle" aria-label="Play music" title="Play / pause">▶</button>
-    <button type="button" class="music-control music-change" aria-label="Change music" title="Change music">＋</button>
-    <button type="button" class="music-control music-stop" aria-label="Stop music" title="Stop music">■</button>`;
+  player.innerHTML = `<span class="music-player-mark">♫</span><span class="music-player-meta"><small>NOW PLAYING</small><strong class="music-player-name">No track selected</strong></span><button type="button" class="music-control music-toggle" aria-label="Play music" title="Play / pause">▶</button><button type="button" class="music-control music-change" aria-label="Change music" title="Choose another song">＋</button><button type="button" class="music-control music-stop" aria-label="Stop music" title="Stop music">■</button>`;
   document.body.appendChild(player);
 
-  const fileInput = modal.querySelector('.music-file');
-  const playButton = modal.querySelector('.music-play');
-  const filename = modal.querySelector('.music-filename');
+  const list = modal.querySelector('.music-track-list');
+  const searchInput = modal.querySelector('.music-search');
+  const enterButton = modal.querySelector('.music-enter');
+  const selectedLabel = modal.querySelector('.music-selected-label');
+  const countLabel = modal.querySelector('.music-count');
   const playerName = player.querySelector('.music-player-name');
   const toggleButton = player.querySelector('.music-toggle');
 
   function openModal() { modal.classList.add('visible'); }
   function closeModal() { modal.classList.remove('visible'); }
-  function setFile(blob, name) {
-    savedBlob = blob;
-    if (currentUrl) URL.revokeObjectURL(currentUrl);
-    currentUrl = URL.createObjectURL(blob);
-    audio.src = currentUrl;
-    filename.textContent = name || 'Selected audio';
-    playerName.textContent = name || 'Selected audio';
-    playButton.disabled = false;
-    player.classList.add('visible');
-    // TODO: Add a preferred default track here only if you have permission to use it.
-  }
 
-  function openDatabase() {
-    return new Promise((resolve, reject) => {
-      if (!('indexedDB' in window)) return resolve(null);
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => request.result.createObjectStore(STORE);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-  }
-  async function saveTrack(blob, name) {
+  async function findPreview(term, fallback) {
     try {
-      const db = await openDatabase();
-      if (!db) return;
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put({ blob, name }, 'track');
-    } catch (error) { console.warn('Could not save music selection:', error); }
-  }
-  async function loadTrack() {
-    try {
-      const db = await openDatabase();
-      if (!db) return null;
-      return await new Promise((resolve, reject) => {
-        const request = db.transaction(STORE).objectStore(STORE).get('track');
-        request.onsuccess = () => resolve(request.result || null);
-        request.onerror = () => reject(request.error);
+      const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=song&limit=8`);
+      if (!response.ok) throw new Error('Search unavailable');
+      const data = await response.json();
+      const results = (data.results || []).filter(item => item.previewUrl && item.trackName && item.artistName);
+      if (!results.length) return null;
+      const normalized = term.toLowerCase();
+      results.sort((a, b) => {
+        const score = item => {
+          const title = (item.trackName + ' ' + item.artistName).toLowerCase();
+          return normalized.split(/\s+/).reduce((n, word) => n + (title.includes(word) ? 1 : 0), 0);
+        };
+        return score(b) - score(a);
       });
-    } catch (error) { console.warn('Could not restore music selection:', error); return null; }
+      const item = results[0];
+      return { id: String(item.trackId), title: item.trackName, artist: item.artistName, preview: item.previewUrl, artwork: item.artworkUrl100 || '', source: 'Apple preview' };
+    } catch (error) {
+      console.warn('Music search could not load:', error);
+      return null;
+    }
   }
 
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files && fileInput.files[0];
-    if (!file) return;
-    if (!file.type.startsWith('audio/')) {
-      filename.textContent = 'Please choose a supported audio file.';
+  function renderTracks(items) {
+    list.innerHTML = '';
+    if (!items.length) {
+      list.innerHTML = '<p class="music-loading">No previews found. Try another search.</p>';
+      countLabel.textContent = '0 tracks';
       return;
     }
-    setFile(file, file.name);
-    await saveTrack(file, file.name);
+    countLabel.textContent = `${items.length} tracks`;
+    items.forEach(track => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'music-track' + (selectedTrack && selectedTrack.id === track.id ? ' selected' : '');
+      row.innerHTML = `<span class="music-track-art">♫</span><span class="music-track-copy"><strong></strong><small></small></span><span class="music-track-add">＋</span>`;
+      row.querySelector('strong').textContent = track.title;
+      row.querySelector('small').textContent = track.artist;
+      row.addEventListener('click', () => selectTrack(track));
+      list.appendChild(row);
+    });
+  }
+
+  function selectTrack(track) {
+    selectedTrack = track;
+    selectedLabel.textContent = `Selected: ${track.title} — ${track.artist}`;
+    playerName.textContent = track.title;
+    enterButton.disabled = false;
+    renderTracks(tracks);
+  }
+
+  async function loadStarterTracks() {
+    list.innerHTML = '<p class="music-loading">Finding song previews…</p>';
+    const found = await Promise.all(starterTracks.map(item => findPreview(item.term, item)));
+    tracks = found.filter(Boolean);
+    renderTracks(tracks);
+    if (!tracks.length) list.innerHTML = '<p class="music-loading">Song previews could not load right now. Check your connection or search again.</p>';
+  }
+
+  async function searchTracks(query) {
+    const version = ++searchVersion;
+    if (!query.trim()) { renderTracks(tracks); return; }
+    list.innerHTML = '<p class="music-loading">Searching…</p>';
+    const results = await findPreview(query);
+    if (version !== searchVersion) return;
+    const found = results ? [results] : [];
+    renderTracks(found);
+    if (found.length) tracks = [...found, ...tracks.filter(track => track.id !== found[0].id)];
+  }
+
+  let searchDelay;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDelay);
+    searchDelay = setTimeout(() => searchTracks(searchInput.value), 350);
   });
-  playButton.addEventListener('click', async () => {
-    if (!audio.src) return;
-    try { await audio.play(); closeModal(); }
-    catch (error) { filename.textContent = 'Could not play this file. Try another audio format.'; }
+
+  modal.querySelector('.music-random').addEventListener('click', () => {
+    if (!tracks.length) return;
+    selectTrack(tracks[Math.floor(Math.random() * tracks.length)]);
   });
+
+  enterButton.addEventListener('click', async () => {
+    if (!selectedTrack) return;
+    audio.src = selectedTrack.preview;
+    audio.loop = false;
+    try {
+      await audio.play();
+      player.classList.add('visible');
+      closeModal();
+      localStorage.setItem('razorMusicPromptSeen', 'yes');
+    } catch (error) {
+      selectedLabel.textContent = 'Preview could not play. Choose another track.';
+    }
+  });
+
   modal.querySelector('.music-skip').addEventListener('click', () => {
     localStorage.setItem('razorMusicPromptSeen', 'yes');
     closeModal();
@@ -128,6 +173,7 @@ if (toggle && links) {
   });
   player.querySelector('.music-change').addEventListener('click', openModal);
   toggleButton.addEventListener('click', async () => {
+    if (!audio.src && selectedTrack) audio.src = selectedTrack.preview;
     if (!audio.src) return openModal();
     if (audio.paused) {
       try { await audio.play(); } catch (error) { openModal(); }
@@ -142,19 +188,17 @@ if (toggle && links) {
   audio.addEventListener('play', () => {
     toggleButton.textContent = 'Ⅱ';
     toggleButton.setAttribute('aria-label', 'Pause music');
+    player.classList.add('visible');
   });
   audio.addEventListener('pause', () => {
     toggleButton.textContent = '▶';
     toggleButton.setAttribute('aria-label', 'Play music');
   });
-  audio.addEventListener('ended', () => { toggleButton.textContent = '▶'; });
-
-  loadTrack().then(track => {
-    if (track && track.blob) setFile(track.blob, track.name);
+  audio.addEventListener('ended', () => {
+    toggleButton.textContent = '▶';
+    toggleButton.setAttribute('aria-label', 'Play music');
   });
-  if (!localStorage.getItem('razorMusicPromptSeen')) {
-    // Show the welcome prompt once; the corner player remains available afterward.
-    openModal();
-    localStorage.setItem('razorMusicPromptSeen', 'yes');
-  }
+
+  loadStarterTracks();
+  if (!localStorage.getItem('razorMusicPromptSeen')) openModal();
 })();
